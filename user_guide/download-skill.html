@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OCI Starter Skill</title>
+  <style>
+    body { max-width: 860px; margin: 2rem auto; padding: 0 1rem; font: 16px/1.55 system-ui, sans-serif; color: #222; }
+    h1, h2, h3 { line-height: 1.2; margin-top: 2rem; }
+    pre { overflow-x: auto; padding: 1rem; background: #f4f4f4; border: 1px solid #ddd; }
+    code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+    :not(pre) > code { background: #f4f4f4; padding: .1em .25em; }
+    .notice { padding: 1rem; border-left: 4px solid #b7791f; background: #fffaf0; }
+    .guide-nav { margin: 0 0 2rem; padding: 1rem; border: 1px solid #ddd; background: #f8f8f8; }
+    .guide-nav strong { display: block; margin-bottom: .4rem; }
+    .guide-nav ul { margin: 0; padding-left: 1.25rem; }
+  </style>
+</head>
+<body>
+  <h3>Downloading skill.</h3>
+  <p> 
+  It will redirect in 3 secs to <a href="oci-starter-skill">the skill documentation.</a>
+  </p>
+  <script>
+    window.addEventListener('load', async () => {
+      try {
+        const response = await fetch('/skill/oci-starter-skill.zip');
+        if (!response.ok) throw new Error('Skill download failed');
+        const fileUrl = URL.createObjectURL(await response.blob());
+        const download = document.createElement('a');
+        download.href = fileUrl;
+        download.download = 'oci-starter-skill.zip';
+        document.body.append(download);
+        download.click();
+        download.remove();
+        URL.revokeObjectURL(fileUrl);
+        setTimeout(() => {
+          window.location.href = "oci-starter-skill.html";
+        }, 3000);        
+      } catch (error) {
+        console.warn(error);
+      }
+    });
+  </script>
+</body>
+</html>

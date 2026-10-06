@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Known Issues — OCI Starter User Guide</title>
+  <style>
+    body { max-width: 860px; margin: 2rem auto; padding: 0 1rem; font: 16px/1.55 system-ui, sans-serif; color: #222; }
+    h1, h2, h3 { line-height: 1.2; margin-top: 2rem; }
+    pre { overflow-x: auto; padding: 1rem; background: #f4f4f4; border: 1px solid #ddd; }
+    code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+    :not(pre) > code { background: #f4f4f4; padding: .1em .25em; }
+    .notice { padding: 1rem; border-left: 4px solid #b7791f; background: #fffaf0; }
+    .warning { padding: 1rem; border-left: 4px solid #b42318; background: #fff4f2; }
+    .guide-nav { margin: 0 0 2rem; padding: 1rem; border: 1px solid #ddd; background: #f8f8f8; }
+    .guide-nav strong { display: block; margin-bottom: .4rem; }
+    .guide-nav ul { margin: 0; padding-left: 1.25rem; }
+  </style>
+</head>
+<body>
+  <nav class="guide-nav" aria-label="User guide pages">
+    <strong>OCI Starter documentation</strong>
+    <ul>
+      <li><a href="index.html">User Guide</a></li>
+      <li><a href="known_issues.html" aria-current="page">Known Issues</a></li>
+      <li><a href="oci-starter-skill.html">OCI Starter Skill</a></li>
+      <li><a href="license.html">License</a></li>
+    </ul>
+  </nav>
+
+  <h1>Known Issues</h1>
+
+  <h2>The public application URL hangs after a successful build</h2>
+  <p>If OCI Starter reports a completed deployment and the application URL does not respond, first check the <code>public_ip_filters</code> value and compare it with the public IP address of the machine and network used to run the build.</p>
+
+  <aside class="notice"><strong>Why this happens:</strong> <code>public_ip_filters</code> controls which public IP addresses can reach an internet-facing stack. A build run from one location can complete successfully, while a browser opened from a different location is blocked by the configured network rule and appears to hang.</aside>
+
+  <h3>First check</h3>
+  <ol>
+    <li>Open <code>terraform.tfvars</code> and find <code>public_ip_filters</code>.</li>
+    <li>Also check <code>$HOME/.oci_starter_profile</code> for <code>export TF_VAR_public_ip_filters=...</code>. When present, this personal profile value overrides the value in <code>terraform.tfvars</code>.</li>
+    <li>Determine the current public IP address of the network where you are opening the application URL.</li>
+    <li>Compare that address with the effective CIDR list in <code>public_ip_filters</code>. A single IP address normally uses the <code>/32</code> suffix.</li>
+  </ol>
+  <pre><code>public_ip_filters=["203.0.113.42/32"]</code></pre>
+
+  <p>For example, if the build was run from a corporate network but the URL is opened from a home network, VPN, mobile connection, or another office, their public IP addresses may differ. The second network must also be allowed by the filter.</p>
+
+  <h3>Repeatable diagnostic process</h3>
+  <p>Run these checks from the same computer and network that is opening the application URL. First, obtain that network's current public IPv4 address:</p>
+  <pre><code>curl -4 https://api.ipify.org</code></pre>
+  <p>If a corporate proxy or local certificate policy prevents this command from working, use an approved “what is my IP” service in the same browser that cannot reach the application. Do not compare an IP reported by a different machine, VPN connection, or build host.</p>
+  <p>Then check where OCI Starter obtains the filter list. This prints only lines that define it:</p>
+  <pre><code>rg -n 'public_ip_filters' terraform.tfvars "$HOME/.oci_starter_profile"</code></pre>
+  <p>A <code>TF_VAR_public_ip_filters</code> export in <code>$HOME/.oci_starter_profile</code> overrides <code>terraform.tfvars</code>. Compare the browser network's public IP with the effective CIDR list.</p>
+  <aside class="notice"><strong>Automation limit:</strong> A health check can verify that the service responds locally on the compute instance and that OCI has applied an ingress rule. It cannot reliably infer the browser's public IP when the browser, command line, VPN, or corporate proxy use different egress paths. The comparison must use the IP seen by the browser that experiences the problem.</aside>
+
+  <h3>Update the permitted address</h3>
+  <p>Update <code>public_ip_filters</code> with the correct public CIDR list in <code>terraform.tfvars</code>, or update the overriding <code>TF_VAR_public_ip_filters</code> value in <code>$HOME/.oci_starter_profile</code>. Then preview and apply the infrastructure change.</p>
+  <aside class="warning"><strong>Cloud operation:</strong> Applying the change updates OCI network rules. Limit the filter to trusted addresses; do not use a broad public range unless that exposure is intentional.</aside>
+  <pre><code>./starter.sh terraform plan
+./starter.sh build</code></pre>
+
+  <p>After the build completes, use the URL shown by OCI Starter or recorded in <code>target/done.txt</code>.</p>
+
+  <h3>If the addresses already match</h3>
+  <p>Check the build log in <code>target/build.log</code>, verify the application URL in <code>target/done.txt</code>, and confirm that the compute instance or other deployment target is running. See the <a href="index.html">User Guide</a> for the relevant operational commands.</p>
+</body>
+</html>

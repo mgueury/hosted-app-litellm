@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OCI Starter Skill</title>
+  <style>
+    body { max-width: 860px; margin: 2rem auto; padding: 0 1rem; font: 16px/1.55 system-ui, sans-serif; color: #222; }
+    h1, h2, h3 { line-height: 1.2; margin-top: 2rem; }
+    pre { overflow-x: auto; padding: 1rem; background: #f4f4f4; border: 1px solid #ddd; }
+    code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+    :not(pre) > code { background: #f4f4f4; padding: .1em .25em; }
+    .notice { padding: 1rem; border-left: 4px solid #b7791f; background: #fffaf0; }
+    .guide-nav { margin: 0 0 2rem; padding: 1rem; border: 1px solid #ddd; background: #f8f8f8; }
+    .guide-nav strong { display: block; margin-bottom: .4rem; }
+    .guide-nav ul { margin: 0; padding-left: 1.25rem; }
+  </style>
+</head>
+<body>
+  <nav class="guide-nav" aria-label="User guide pages">
+    <strong>OCI Starter documentation</strong>
+    <ul>
+      <li><a href="index.html">User Guide</a></li>
+      <li><a href="known_issues.html">Known Issues</a></li>
+      <li><a href="oci-starter-skill.html" aria-current="page">OCI Starter Skill</a></li>
+      <li><a href="license.html">License</a></li>
+    </ul>
+  </nav>
+  <h1>OCI Starter Skill</h1>
+
+  <p><strong><a href="/skill/oci-starter-skill.zip">Download here.</a></strong></strong></p>
+
+  <p>Use this skill to create applications and OCI Starter projects for Oracle Cloud Infrastructure. It guides an agent through choosing an OCI Starter architecture, downloading the appropriate scaffold, and implementing the application in it.</p>
+
+  <p>This is a skill that should work with all coding agents. Below, you will find how to install it for Codex, ChatGPT Desktop, and OpenCode.</p>
+
+  <aside class="notice"><strong>Windows notice:</strong> The Windows paths and PowerShell commands below are provided as a best-effort reference and have <strong>not been tested on Windows</strong>.</aside>
+
+  <h2>Codex</h2>
+
+  <h3>macOS and Linux</h3>
+  <p>Download the skill archive, then extract it into your global Codex skills directory:</p>
+  <pre><code class="language-sh">mkdir -p "${CODEX_HOME:-$HOME/.codex}/skills"
+cd "${CODEX_HOME:-$HOME/.codex}/skills"
+curl -fL https://www.ocistarter.com/skill/oci-starter-skill.zip -o oci-starter-skill.zip
+unzip oci-starter-skill.zip</code></pre>
+  <p>Restart Codex desktop, then ask it to use <code>$oci-starter-skill</code>, for example:</p>
+  <pre><code>Use $oci-starter-skill to create a Python application for Kubernetes with OCI Starter.</code></pre>
+
+  <h3>Windows (untested)</h3>
+  <p>In PowerShell, download and extract the skill into <code>%USERPROFILE%\.codex\skills</code>:</p>
+  <pre><code class="language-powershell">New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.codex\skills"
+Set-Location "$env:USERPROFILE\.codex\skills"
+Invoke-WebRequest "https://www.ocistarter.com/skill/oci-starter-skill.zip" -OutFile "oci-starter-skill.zip"
+Expand-Archive -Force "oci-starter-skill.zip" .</code></pre>
+  <p>Restart Codex desktop and use the same prompt shown above.</p>
+
+  <h2>ChatGPT Desktop</h2>
+  <ol>
+    <li>Download <a href="/skill/oci-starter-skill.zip" download="oci-starter-skill.zip">oci-starter-skill.zip</a>.</li>
+    <li>In ChatGPT desktop, open <strong>Plugins</strong> in the sidebar, open the <strong>Skills</strong> tab, then select <strong>Create</strong> → <strong>Upload</strong>.</li>
+    <li>Select the ZIP archive and complete the scan or review process, if prompted.</li>
+    <li>Start a new chat and ask ChatGPT to use <code>$oci-starter-skill</code>.</li>
+  </ol>
+  <p>Skill uploads are available only for eligible accounts and may be disabled by your workspace administrator. Skills installed in ChatGPT desktop are managed separately from Codex skills.</p>
+
+  <h2>OpenCode</h2>
+  <p>OpenCode discovers directory-based skills that contain <code>SKILL.md</code>. Keep the folder name <code>oci-starter-skill</code> so its skill ID remains <code>oci-starter-skill</code>.</p>
+
+  <h3>Global installation (macOS and Linux)</h3>
+  <p>Download and extract the skill to make it available in all OpenCode projects:</p>
+  <pre><code class="language-sh">mkdir -p "$HOME/.config/opencode/skills"
+cd "$HOME/.config/opencode/skills"
+curl -fL https://www.ocistarter.com/skill/oci-starter-skill.zip -o oci-starter-skill.zip
+unzip oci-starter-skill.zip</code></pre>
+
+  <h3>Project installation (macOS and Linux)</h3>
+  <p>Make the skill available only in one project. Replace <code>my-project</code> with your project directory:</p>
+  <pre><code class="language-sh">mkdir -p my-project/.opencode/skills
+cd my-project/.opencode/skills
+curl -fL https://www.ocistarter.com/skill/oci-starter-skill.zip -o oci-starter-skill.zip
+unzip oci-starter-skill.zip</code></pre>
+
+  <h3>Windows (untested)</h3>
+  <p>Use the corresponding OpenCode skill directory, typically <code>%USERPROFILE%\.config\opencode\skills</code> for a global installation, or <code>.opencode\skills</code> within a project. For example, in PowerShell:</p>
+  <pre><code class="language-powershell">New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.config\opencode\skills"
+Set-Location "$env:USERPROFILE\.config\opencode\skills"
+Invoke-WebRequest "https://www.ocistarter.com/skill/oci-starter-skill.zip" -OutFile "oci-starter-skill.zip"
+Expand-Archive -Force "oci-starter-skill.zip" .</code></pre>
+  <p>Restart OpenCode, then request the skill by name:</p>
+  <pre><code>Use the oci-starter-skill to create a Python application for Kubernetes with OCI Starter.</code></pre>
+
+  <h2>Verify and troubleshoot</h2>
+  <ul>
+    <li>Confirm the installed directory is named <code>oci-starter-skill</code> and directly contains <code>SKILL.md</code>.</li>
+    <li>Confirm the installed copy also contains <code>scripts/oci_starter_url.py</code> and <code>references/options.md</code>.</li>
+    <li>Restart the relevant desktop app after installing or updating the skill.</li>
+    <li>If the skill is not discovered, check for an accidentally nested path such as <code>oci-starter-skill/oci-starter-skill/SKILL.md</code>.</li>
+    <li>When updating an installation, download a fresh copy of <a href="/skill/oci-starter-skill.zip" download="oci-starter-skill.zip">oci-starter-skill.zip</a>, replace the existing skill folder, and restart the app.</li>
+  </ul>
+  <p>For product-specific availability and upload permissions, see the official <a href="https://help.openai.com/en/articles/20001066-skills-in-chatgpt/">Skills in ChatGPT guide</a> and the <a href="https://opencode.ai/v2/docs/skills">OpenCode skills documentation</a>.</p>
+</body>
+</html>

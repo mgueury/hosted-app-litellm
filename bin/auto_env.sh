@@ -1,0 +1,489 @@
+#!/usr/bin/env bash
+
+# PROJECT_DIR
+if [[ -z "${PROJECT_DIR}" ]]; then
+    echo "ERROR: PROJECT_DIR not set"
+    exit 1
+fi
+# TARGET_DIR
+export TARGET_DIR=$PROJECT_DIR/target
+export STATE_FILE=$TARGET_DIR/terraform.tfstate
+if [ ! -d $TARGET_DIR ]; then
+    mkdir $TARGET_DIR
+fi
+if [ -d $PROJECT_DIR/../terraform_common ]; then
+   TERRAFORM_COMMON_DIR=$PROJECT_DIR/../terraform_common
+elif [ -d $PROJECT_DIR/../../terraform_common ]; then  
+   TERRAFORM_COMMON_DIR=$PROJECT_DIR/../../terraform_common
+fi
+
+# BIN_DIR
+if [[ -z "${BIN_DIR}" ]]; then
+    export BIN_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+fi
+# Detect if the script is started From Resource Manager 
+if [ -f $PROJECT_DIR/terraform.tfstate ]; then
+    # If yes, link terraform.tfstate to target/terraform.tfstate 
+    ln -sf $PROJECT_DIR/terraform.tfstate $STATE_FILE
+fi
+# Set pipefail to get the error despite pipe to tee
+set -o pipefail
+
+# Shared BASH Functions
+. $BIN_DIR/shared_bash_function.sh
+
+# Silent mode (default is not silent)
+if [ "$1" == "-silent" ]; then
+    SILENT_MODE=true
+else
+    unset SILENT_MODE
+fi 
+
+# Function to parse a .tfvars file and export TF_VAR_variables
+process_terraform_tfvars() {
+    # 2 modes 
+    # - normal     terraform.tfvars -> export
+    # - create_sh  terraform.tfvars -> tf_vars.sh
+    if [ "$1" == "create_sh" ]; then
+        if [[ "$PROJECT_DIR" != */terraform_common ]] && [ -f $TERRAFORM_COMMON_DIR/target/tf_vars.sh ]; then
+            # Start from GROUP_COMMON if it exist and overwrite the values
+            cp $TERRAFORM_COMMON_DIR/target/tf_vars.sh $TARGET_DIR/tf_vars.sh
+        else
+            echo "# Generated from terraform.tfvars ($TF_VAR_prefix)" > $TARGET_DIR/tf_vars.sh
+        fi
+    fi
+    # Read the file line by line, ignoring comments and empty lines
+    while read -r line; do
+        if [[ "$line" =~ ^\s*# ]]; then
+            :
+        elif [[ "$line" =~ ^\s*$ ]]; then
+            :      
+        else
+            key="${line%%=*}"
+            value="${line#*=}"
+            # Remove quotes from the value if present (e.g., "value" or 'value')
+            value=$(echo "$value" | sed -E "s/^['\"](.*)['\"]$/\1/")
+            # Check if key and value are not empty
+            if [[ "$key" != "" && "$value" != "" ]]; then
+                key_name="TF_VAR_${key}"
+                if [ "$1" == "create_sh" ]; then
+                    # Save the value after all 4 steps
+                    if [ "$key_name" != "TF_VAR_public_ip_filters" ]; then
+                        sed "s/export ${key_name}=.*/# ${key_name} overwritten/" $TARGET_DIR/tf_vars.sh > $TARGET_DIR/tf_vars.tmp 
+                        mv $TARGET_DIR/tf_vars.tmp $TARGET_DIR/tf_vars.sh                    
+                        printf 'export %s="%s"\n' "${key_name}" "${!key_name}" >> $TARGET_DIR/tf_vars.sh
+                    else
+                        printf '# public_ip_filters skipped\n' >> $TARGET_DIR/tf_vars.sh
+                    fi
+                else
+                    # Export 
+                    export "${key_name}"="${value}"
+                fi
+            fi
+        fi
+    done < "$PROJECT_DIR/terraform.tfvars"
+    chmod +x $TARGET_DIR/tf_vars.sh
+    unset value
+}
+
+# Environment Variables
+# In 4 places:
+auto_echo "Reading variables"
+auto_echo
+auto_echo "Order     File Name                             Settings from"
+auto_echo "-----     ---------                             -------------"
+
+# 1. target/tf_env.sh created by the terraform (created by the first build)
+if [ -f $TARGET_DIR/tf_env.sh ]; then
+    . $TARGET_DIR/tf_env.sh
+    auto_echo "1         \$PROJECT_DIR/target/tf_env.sh         Terraform apply"
+elif [ -f $TERRAFORM_COMMON_DIR/target/tf_env.sh ]; then
+    . $TERRAFORM_COMMON_DIR/target/tf_env.sh
+    auto_echo "1         $TERRAFORM_COMMON_DIR/tf_env.sh      Terraform apply"
+else
+    auto_echo "1 SKIP    \$PROJECT_DIR/target/tf_env.sh         Terraform apply"
+fi 
+# 2. terraform.tfvars
+auto_echo "2         terraform.tfvars                      Project"  
+process_terraform_tfvars read
+# 3. $HOME/.oci_starter_profile
+if [ -f $HOME/.oci_starter_profile ]; then
+    . $HOME/.oci_starter_profile
+    auto_echo "3         \$HOME/.oci_starter_profile            User Home"
+else
+    auto_echo "3 SKIP    \$HOME/.oci_starter_profile            User Home"
+fi 
+# 4. for groups, also in terraform_common_env.sh
+if [[ "$PROJECT_DIR" == */terraform_common ]]; then
+    # Do not load terraform_common_env.sh from terraform_common
+    auto_echo "4 SKIP    terraform_common_env.sh               Group of Projects" 
+elif [ -f $TERRAFORM_COMMON_DIR/../terraform_common_env.sh ]; then
+    . $TERRAFORM_COMMON_DIR/../terraform_common_env.sh
+    auto_echo "4         terraform_common_env.sh               Group of Projects"
+else
+    auto_echo "4 SKIP    terraform_common_env.sh               Group of Projects" 
+fi
+
+# Generate $TARGET_DIR/tf_vars.sh from terraform.tfvars with the __TO_FILL__ values found above
+process_terraform_tfvars create_sh
+
+# Check commands that are typically missing
+if ! command -v jq &> /dev/null; then
+    error_exit "Unix command jq not found. Please install it."
+fi
+
+if ! command -v rsync &> /dev/null; then
+    error_exit "Unix command rsync not found. Please install it."
+fi
+
+if [ "$TF_VAR_deploy_type" == "kubernetes" ] || [ "$TF_VAR_deploy_type" == "container_instance" ] || [ "$TF_VAR_deploy_type" == "function" ] || [ "$TF_VAR_deploy_type" == "hosted_app" ]; then
+    export DEPLOY_WITH_DOCKER="true"
+    if ! command -v docker &> /dev/null; then
+        if ! command -v podman &> /dev/null; then
+            error_exit "Unix command docker or podman not found. Please install one of them."
+        else 
+            alias docker=podman 
+            # Inherit alias in subprocesses
+            shopt -s expand_aliases
+        fi
+    fi
+fi
+
+if [ "$TF_VAR_deploy_type" == "kubernetes" ]; then
+    if ! command -v kubectl &> /dev/null; then
+        error_exit "Unix command kubectl not found. Please install it."
+    fi
+    export TARGET_OKE=$TARGET_DIR/oke
+    mkdir -p $TARGET_OKE
+fi
+
+if [ "$TF_VAR_deploy_type" == "hosted_app" ] && ! command -v oci >/dev/null 2>&1; then
+    error_exit "OCI CLI not found. Install it before building a hosted app."
+fi
+
+# Autocomplete in bash
+_starter_completions()
+{
+    COMPREPLY=($(compgen -W "build ssh terraform destroy generate deploy env help" "${COMP_WORDS[1]}"))
+}
+complete -F _starter_completions ./starter.sh
+
+# Check the SHAPE
+unset MISMATCH_PLATFORM
+if [ "$DEPLOY_WITH_DOCKER" == "true" ]; then
+    if [ "$(uname -m)" = "arm64" ] || [ "$(uname -m)" = "aarch64" ]; then
+        export TF_VAR_cpu_architecture="arm64"
+    else
+        export TF_VAR_cpu_architecture="amd64"
+    fi
+
+    if [ "$TF_VAR_deploy_type" == "hosted_app" ]; then
+        # Generative AI Hosted Deployments only accept linux/amd64 artifacts.
+        # This must not depend on the architecture of a Terraform compute shape.
+        DOCKER_TARGET_PLATFORM="linux/amd64"
+        # docker_build consumes this value. Without it, its fallback selects the
+        # local machine architecture, which produces ARM64 images on Apple
+        # Silicon and leaves the Hosted Deployment in NEEDS_ATTENTION.
+        export DOCKER_DEFAULT_PLATFORM="$DOCKER_TARGET_PLATFORM"
+    elif [ "$TF_VAR_infra_as_code" == "from_resource_manager" ]; then
+        # Resource Manager run on ARM processor. So, docker is in ARM mode too...
+        export TF_VAR_instance_shape="VM.Standard.A1.Flex"
+        DOCKER_TARGET_PLATFORM="linux/arm64"
+        export DOCKER_DEFAULT_PLATFORM="$DOCKER_TARGET_PLATFORM"
+    else
+        if [ "$TF_VAR_instance_shape" == "VM.Standard.A1.Flex" ]; then
+            DOCKER_TARGET_PLATFORM="linux/arm64"
+            DESIRED_PLATFORM="ARM (aarch64)"
+            HOST_ARCHITECTURES="arm64 aarch64"
+        else
+            DOCKER_TARGET_PLATFORM="linux/amd64"
+            DESIRED_PLATFORM="X86_64"
+            HOST_ARCHITECTURES="x86_64 amd64"
+        fi
+
+        HOST_ARCHITECTURE=$(uname -m)
+        
+        if [[ " $HOST_ARCHITECTURES " != *" $HOST_ARCHITECTURE "* ]]; then
+            # auto_echo "Docker cross-platform build - Host Architecture $HOST_ARCHITECTURE not in $HOST_ARCHITECTURES"        
+            # A non-native image can be built only when the active Buildx builder supports it.
+            if docker buildx inspect --bootstrap 2>/dev/null | grep -Eq "(^|[[:space:],])${DOCKER_TARGET_PLATFORM}([,[:space:]]|$)"; then
+                export DOCKER_DEFAULT_PLATFORM=$DOCKER_TARGET_PLATFORM
+                auto_echo "Docker cross-platform build - Host Architecture $HOST_ARCHITECTURE - DOCKER_DEFAULT_PLATFORM $DOCKER_TARGET_PLATFORM"
+            else
+                MISMATCH_PLATFORM="ERROR: Cannot build ${DOCKER_TARGET_PLATFORM} images on ${HOST_ARCHITECTURE}. The active Docker Buildx builder does not support cross-compilation for this platform."
+            fi
+        fi
+
+        if [ "$MISMATCH_PLATFORM" != "" ]; then
+            echo $MISMATCH_PLATFORM
+            echo
+            if [ "$OCI_CLI_CLOUD_SHELL" == "True" ];  then
+                echo "Cloud Shell is not running in the correct Architecture. Please change it in the menu above."
+                echo
+                echo "Action:"
+                echo "- Click the menu 'Actions' on top of Cloud Shell"
+                echo "- Choose 'Architecture"
+                echo "  - Choose $DESIRED_PLATFORM"
+                echo "  - Click 'Confirm'"
+                echo "- Restart the build"
+            fi
+            echo "Exiting. Please use the right CPU Architecture."
+            exit 1
+        fi
+        export DOCKER_DEFAULT_PLATFORM="$DOCKER_TARGET_PLATFORM"
+    fi
+fi
+
+# Enable BASH history for Stack Trace.
+# - Do not store in HISTFILE 
+# - Do not use it when env.sh is called from bash directly.
+if [ "$0" != "-bash" ]; then
+    unset HISTFILE
+    set -o history -o histexpand
+fi
+
+if [ "$1" == "-no-auto" ]; then
+    return
+fi 
+
+# Change the prompt
+export PS1='[\[\e[0;3m\]\u@\h:\W\[\e[0m\]]$ '
+
+# Before Config (run only once)
+if [ -f $PROJECT_DIR/src/before_config.sh ]; then
+    detect_livelabs
+    . $PROJECT_DIR/src/before_config.sh
+    mv $PROJECT_DIR/src/before_config.sh $PROJECT_DIR/src/before_config.sh.done
+fi
+
+# Skip if runned from OCI Devops ?
+# if [ "$REPOSITORY_NAME" != "" ]; then
+#   return
+# fi 
+
+# CONFIG.SH
+. $BIN_DIR/config.sh
+
+#-- PRE terraform ----------------------------------------------------------
+# Combination of tvars variables and fixed variables
+if [ "$OCI_STARTER_VARIABLES_SET" == "${TF_VAR_prefix}_${TF_VAR_deploy_type}" ]; then
+    echo "Variables already set"
+else
+    #-- Check internet connection ---------------------------------------------
+    wget -q --spider http://www.oracle.com
+
+    if [ "$?" != "0" ]; then
+        echo "---------------------------------------------------------------------"
+        echo "WARNING - Are you sure that you have connection to Internet ? "
+        if [ "$OCI_CLI_CLOUD_SHELL" == "True" ];  then
+        echo "- For Cloud Shell, be sure that you have an connection to Internet."
+        echo "  Please change the Network connection to Public Network."
+        echo "  See: https://docs.oracle.com/en-us/iaas/Content/API/Concepts/cloudshellintro_topic-Cloud_Shell_Networking.htm"
+        fi
+        echo "---------------------------------------------------------------------"
+    fi
+
+    export OCI_STARTER_VARIABLES_SET=$TF_VAR_prefix
+    get_user_details
+
+    # SSH keys
+    if [ "$TF_VAR_ssh_private_path" == "" ] && [ -f $TARGET_DIR/ssh_key_starter ]; then 
+        export TF_VAR_ssh_private_path=$TARGET_DIR/ssh_key_starter
+        export TF_VAR_ssh_public_key=$(cat $TARGET_DIR/ssh_key_starter.pub)
+        export TF_VAR_ssh_private_key=$(cat $TARGET_DIR/ssh_key_starter)
+    fi
+
+    # Echo
+    auto_echo TF_VAR_tenancy_ocid=$TF_VAR_tenancy_ocid
+    auto_echo TF_VAR_compartment_ocid=$TF_VAR_compartment_ocid
+    auto_echo TF_VAR_region=$TF_VAR_region
+
+    # DATE_POSTFIX (used for logs names)
+    DATE_POSTFIX=`date '+%Y%m%d-%H%M%S'`
+
+    # Namespace
+    export TF_VAR_namespace=`oci os ns get | jq -r .data`
+    auto_echo TF_VAR_namespace=$TF_VAR_namespace
+
+    # Kubernetes and OCIR
+    if [ "$TF_VAR_deploy_type" == "kubernetes" ] || [ "$TF_VAR_deploy_type" == "function" ] || [ "$TF_VAR_deploy_type" == "container_instance" ] || [ -f $PROJECT_DIR/src/terraform/oke.tf ]; then
+        export TF_VAR_email=mail@domain.com
+        auto_echo TF_VAR_email=$TF_VAR_email
+        if [ -f ${TERRAFORM_COMMON_DIR}/target/kubeconfig_starter ]; then
+            export KUBECONFIG="$(realpath "${TERRAFORM_COMMON_DIR}/target/kubeconfig_starter")"
+        else 
+            # If not, it will be downloaded in $TARGET_DIR
+            export KUBECONFIG=${TARGET_DIR}/kubeconfig_starter
+        fi
+    fi
+
+    if [ "$TF_VAR_db_type" == "nosql" ]; then
+        # export TF_VAR_nosql_endpoint="nosql.${TF_VAR_region}.oci.oraclecloud.com"
+        export TF_VAR_nosql_endpoint=`oci nosql table list --compartment-id $TF_VAR_compartment_ocid -d 2>&1 | grep "Endpoint: https" | sed "s#.* https:\/\/##" | sed "s#/.*##"`
+    fi
+
+    # OpenAPI Spec
+    if [ -f $PROJECT_DIR/src/app/openapi_spec.yaml ]; then
+        export TF_VAR_openapi_spec=$(cat $PROJECT_DIR/src/app/openapi_spec.yaml)
+    fi
+
+    if [ "$TF_VAR_deploy_type" == "hpc" ]; then
+        # Create synonyms for variables with another name in the oci-hpc stack
+        export TF_VAR_ssh_key=$TF_VAR_ssh_public_key
+        export TF_VAR_targetCompartment=$TF_VAR_compartment_ocid
+        export TF_VAR_ad=`oci iam availability-domain list --compartment-id=$TF_VAR_tenancy_ocid | jq -r .data[0].name`
+        export TF_VAR_bastion_ad=$TF_VAR_ad
+    fi 
+  
+    # Base DB - version
+    if [ -f $PROJECT_DIR/src/terraform/dbsystem.tf ]; then
+        export TF_VAR_db_version=`oci db version list --compartment-id $TF_VAR_compartment_ocid --db-system-shape VM.Standard.E4.Flex | jq -r ".data | last | .version"`
+    fi
+
+    # TLS
+    if [ "$TF_VAR_dns_name" != "" ] && [ "$TF_VAR_certificate_ocid" == "" ]; then
+        export TF_VAR_certificate_ocid=`oci certs-mgmt certificate list --all --compartment-id $TF_VAR_compartment_ocid --name $TF_VAR_dns_name | jq -r .data.items[].id`
+    fi
+
+    # GIT
+    if [ `git rev-parse --is-inside-work-tree 2>/dev/null` ]; then   
+        export GIT_BRANCH=`git rev-parse --abbrev-ref HEAD`
+        if [ "$GIT_BRANCH" != "" ]; then
+            export TF_VAR_git_url=`git config --get remote.origin.url`
+            if [[ "$TF_VAR_git_url" == *"github.com"* ]]; then
+                S1=${TF_VAR_git_url/git@github.com:/https:\/\/github.com\/}        
+                if [[ "$TF_VAR_git_url" == *".git"* ]]; then
+                    export TF_VAR_git_url=${S1/.git/\/blob\/}${GIT_BRANCH}
+                else
+                    export TF_VAR_git_url=${S1}/blob/${GIT_BRANCH}
+                fi
+            elif [[ "$TF_VAR_git_url" == *"gitlab.com"* ]]; then
+                S1=${TF_VAR_git_url/git@gitlab.com:/https:\/\/gitlab.com\/}        
+                export TF_VAR_git_url=${S1/.git/\/-\/blob\/}${GIT_BRANCH}
+            fi
+            cd $PROJECT_DIR
+            export GIT_RELATIVE_PATH=`git rev-parse --show-prefix`
+            cd - > /dev/null
+            export TF_VAR_git_url=${TF_VAR_git_url}/${GIT_RELATIVE_PATH}
+            auto_echo TF_VAR_git_url=$TF_VAR_git_url
+        fi  
+    fi
+fi
+
+
+#-- POST terraform ----------------------------------------------------------
+if [ -f $STATE_FILE ]; then
+    echo "Reading $STATE_FILE"
+
+    # OBJECT_STORAGE_URL
+    export OBJECT_STORAGE_URL=https://objectstorage.${TF_VAR_region}.oraclecloud.com
+
+    # APIGW URL - not always used
+    get_attribute_from_tfstate "APIGW_HOSTNAME" "starter_apigw" "hostname"
+    # APIGW Deployment id
+    get_attribute_from_tfstate "APIGW_DEPLOYMENT_OCID" "starter_apigw_deployment" "id"
+ 
+    # Instance Pool
+    if [ "$TF_VAR_deploy_type" == "instance_pool" ]; then
+        # XXX Does not work with Resource Manager XXX
+        # Check in the terraform state is the compute is already created.
+        get_id_from_tfstate "COMPUTE_OCID" "starter_compute"
+        if [ "$COMPUTE_OCID" != "" ]; then
+            export TF_VAR_compute_ready="true"
+        fi
+    fi
+
+    # Functions
+    if [ "$TF_VAR_deploy_type" == "function" ]; then
+        # OBJECT Storage URL
+        export BUCKET_URL="https://objectstorage.${TF_VAR_region}.oraclecloud.com/n/${OBJECT_STORAGE_NAMESPACE}/b/${TF_VAR_prefix}-public-bucket/o"
+
+        # Function OCID
+        get_attribute_from_tfstate "FN_FUNCTION_OCID" "starter_fn_function" "id"
+
+        auto_echo "file=$TARGET_DIR/fn_image.txt" 
+        if [ -f $TARGET_DIR/fn_image.txt ]; then
+            export TF_VAR_fn_image=`cat $TARGET_DIR/fn_image.txt`
+            auto_echo TF_VAR_fn_image=$TF_VAR_fn_image
+        fi   
+    fi
+
+    # Container Instance
+    if [ "$TF_VAR_deploy_type" == "container_instance" ] || [ "$TF_VAR_deploy_type" == "hosted_app" ]; then
+        if [ -f $TARGET_DIR/docker_image_ui.txt ]; then
+            export TF_VAR_docker_image_ui=`cat $TARGET_DIR/docker_image_ui.txt`
+        else
+            export TF_VAR_docker_image_ui="busybox"      
+        fi
+        if [ -f $TARGET_DIR/docker_image_rest.txt ]; then
+            export TF_VAR_docker_image_rest=`cat $TARGET_DIR/docker_image_rest.txt`
+        else
+            export TF_VAR_docker_image_rest="busybox"      
+        fi
+        if [ -f $TARGET_DIR/docker_image_mcp_server.txt ]; then
+            export TF_VAR_docker_image_mcp_server=`cat $TARGET_DIR/docker_image_mcp_server.txt`
+        else
+            export TF_VAR_docker_image_mcp_server="busybox"      
+        fi        
+    fi
+
+    # export all OUTPUTS of the terraform file
+    # XXXXXX Still needed ? local_xx takes care of this ? 
+    if [ "$IDCS_URL" == "" ]; then
+        LIST_OUTPUT=`cat $STATE_FILE| jq .outputs | jq -r 'keys[]'`
+        for output in $LIST_OUTPUT; do
+            value=`cat $STATE_FILE | jq -r ".outputs[\"$output\"].value"`
+            echo "export ${output^^}=\"$value\"" 
+            eval "export ${output^^}=\"$value\"" 
+        done 
+    fi
+
+    # Check if there is a BASTION SERVICE with a BASTION COMMAND
+    if [ "$BASTION_COMMAND" == "" ]; then
+        if [ "$TF_VAR_deploy_type" == "public_compute" ]; then
+            # Ideally BASTION_PROXY_COMMAND should be not used. But passing a empty value does not work...
+            export COMPUTE_IP=$BASTION_IP
+        fi
+        export BASTION_USER_HOST="opc@$BASTION_IP"
+        export BASTION_PROXY_COMMAND="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -W %h:%p $BASTION_USER_HOST"
+    else 
+        # export Ex: BASTION_COMMAND="ssh -i <privateKey>-o ProxyCommand=\"ssh -i <privateKey> -W %h:%p -p 22 ocid1.bastionsession.oc1.eu-frankfurt-1.xxxxxxxx@host.bastion.eu-frankfurt-1.oci.oraclecloud.com\" -p 22 opc@10.0.1.97"
+        export BASTION_USER_HOST=`echo $BASTION_COMMAND | sed "s/.*ocid1.bastionsession/ocid1.bastionsession/" | sed "s/oci\.oraclecloud\.com.*/oci\.oraclecloud\.com/"`
+        export BASTION_IP=`echo $BASTION_COMMAND | sed "s/.*opc@//"`
+        export BASTION_PROXY_COMMAND="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -W %h:%p $BASTION_USER_HOST"
+    fi
+
+    if [ "$TF_VAR_db_type" == "database" ]; then
+        get_attribute_from_tfstate "DB_NODE_IP" "starter_node_vnic" "private_ip_address"
+    fi
+
+    if [ "$TF_VAR_deploy_type" == "kubernetes" ] || [ -f $PROJECT_DIR/src/terraform/oke.tf ]; then
+        # OKE
+        if [ -f $KUBECONFIG ]; then
+            oke_get_gateway_ip  
+        fi
+    fi
+
+    # JMS
+    if [ -f $PROJECT_DIR/src/terraform/jms.tf ]; then 
+        if [ ! -f $TARGET_DIR/jms_agent_deploy.sh ]; then
+            # JMS requires a "jms" tag namespace / tag "fleet_ocid" (that is unique and should not be deleted by terraform destroy) 
+            TAG_NAMESPACE_OCID=`oci iam tag-namespace list --compartment-id=$TF_VAR_tenancy_ocid | jq -r '.data[] | select(.name=="jms") | .id'`
+            if [ "$TAG_NAMESPACE_OCID" == "" ]; then
+                oci iam tag-namespace create --compartment-id $TF_VAR_tenancy_ocid --description jms --name jms | tee $TARGET_DIR/jms_tag_namespace.log
+                TAG_NAMESPACE_OCID=`cat $TARGET_DIR/jms_tag_namespace.log | jq -r .data.id`
+                oci iam tag create --description fleet_ocid --name fleet_ocid --tag-namespace-id $TAG_NAMESPACE_OCID | tee $TARGET_DIR/jms_tag_definition.log
+            fi  
+            oci jms fleet generate-agent-deploy-script --file $TARGET_DIR/jms_agent_deploy.sh --fleet-id $FLEET_OCID --install-key-id $INSTALL_KEY_OCID --is-user-name-enabled true --os-family "LINUX"
+        fi 
+    fi
+
+    if [ "$ORDS_URL" != "" ]; then
+        export ORDS_HOST=`basename $(dirname $ORDS_URL)`
+    fi
+
+    # after_auto_env.sh
+    if [ -f $PROJECT_DIR/src/after_auto_env.sh ]; then
+        . $PROJECT_DIR/src/after_auto_env.sh
+    fi  
+fi

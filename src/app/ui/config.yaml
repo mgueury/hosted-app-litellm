@@ -1,0 +1,12 @@
+model_list: []
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  litellm_key_header_name: x-litellm-api-key
+  store_model_in_db: true
+  database_connection_pool_limit: 5
+
+litellm_settings:
+  json_logs: true
+  set_verbose: false
+  request_timeout: 600

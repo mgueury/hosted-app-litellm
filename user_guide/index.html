@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OCI Starter User Guide</title>
+  <style>
+    body { max-width: 860px; margin: 2rem auto; padding: 0 1rem; font: 16px/1.55 system-ui, sans-serif; color: #222; }
+    h1, h2, h3 { line-height: 1.2; margin-top: 2rem; }
+    pre { overflow-x: auto; padding: 1rem; background: #f4f4f4; border: 1px solid #ddd; }
+    code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+    :not(pre) > code { background: #f4f4f4; padding: .1em .25em; }
+    .notice { padding: 1rem; border-left: 4px solid #b7791f; background: #fffaf0; }
+    .warning { padding: 1rem; border-left: 4px solid #b42318; background: #fff4f2; }
+    .guide-nav { margin: 0 0 2rem; padding: 1rem; border: 1px solid #ddd; background: #f8f8f8; }
+    .guide-nav strong { display: block; margin-bottom: .4rem; }
+    .guide-nav ul { margin: 0; padding-left: 1.25rem; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: .65rem; text-align: left; vertical-align: top; border: 1px solid #ddd; }
+    th { background: #f4f4f4; }
+  </style>
+</head>
+<body>
+  <nav class="guide-nav" aria-label="User guide pages">
+    <strong>OCI Starter documentation</strong>
+    <ul>
+      <li><a href="index.html" aria-current="page">User Guide</a></li>
+      <li><a href="known_issues.html">Known Issues</a></li>
+      <li><a href="oci-starter-skill.html">OCI Starter Skill</a></li>
+      <li><a href="license.html">License</a></li>
+    </ul>
+  </nav>
+
+  <h1>OCI Starter User Guide</h1>
+  <p>OCI Starter generates a working cloud-native application, its infrastructure as code, and the scripts needed to deploy it on Oracle Cloud Infrastructure (OCI). This guide explains the normal workflow first, then the operational commands you can use after deployment.</p>
+
+  <aside class="notice"><strong>Before you begin:</strong> OCI Starter is designed for users with an OCI account and locally configured OCI credentials. Read each command before running it. Commands that create, update, stop, or delete cloud resources use your OCI credentials and may incur cost.</aside>
+
+  <h2>1. Choose a stack</h2>
+  <p>At <a href="https://www.ocistarter.com/">OCI Starter</a>, choose the components for your application. OCI Starter supports several deployment targets:</p>
+  <table>
+    <thead><tr><th>Deployment target</th><th>Use it when</th></tr></thead>
+    <tbody>
+      <tr><td>Public or private compute</td><td>You want a virtual machine deployment, either internet-facing or reachable only inside your network.</td></tr>
+      <tr><td>Instance pool</td><td>You need multiple compute instances managed as a group.</td></tr>
+      <tr><td>Kubernetes</td><td>You need a container-orchestrated application on Oracle Kubernetes Engine.</td></tr>
+      <tr><td>Container instance</td><td>You want to run a container without managing virtual machines or a cluster.</td></tr>
+      <tr><td>Hosted Application</td><td>You want OCI to run your container images as Generative AI Hosted Applications, without managing compute instances or a Kubernetes cluster.</td></tr>
+      <tr><td>Function</td><td>You need a serverless, event-driven workload.</td></tr>
+    </tbody>
+  </table>
+  <p>Select the runtime, UI, database, and deployment target, then download the generated <code>starter.zip</code> archive. For deployment-specific tutorials and additional architecture choices, see the <a href="https://livelabs.oracle.com/pls/apex/r/dbpm/livelabs/view-workshop?wid=3857">OCI Starter LiveLabs workshop</a>.</p>
+
+  <h2>2. Generated project layout</h2>
+  <p>Extract <code>starter.zip</code> into an empty project directory. The archive contains the project files directly under its <code>starter/</code> folder.</p>
+  <pre><code>starter/
+├── starter.sh          # OCI Starter command entry point
+├── terraform.tfvars    # Your project configuration
+├── bin/                # Generated deployment tooling; do not edit
+└── src/
+    ├── app/
+    │   ├── db/         # SQL scripts and database setup
+    │   ├── rest/       # Backend REST application
+    │   └── ui/         # Frontend application
+    └── terraform/      # Terraform resources for the selected stack</code></pre>
+
+  <h2>3. Basic workflow</h2>
+
+  <h3>Configure required values</h3>
+  <p>Open <code>terraform.tfvars</code> and set the values marked <code>__TO_FILL__</code>. For a public deployment, this normally includes:</p>
+  <pre><code>db_password="choose-a-strong-password"
+public_ip_filters=["your.public.ip.address/32"]
+compartment_ocid="ocid1.compartment..."</code></pre>
+  <p>Add every trusted CIDR to the same list when more than one network needs access:</p>
+  <pre><code>public_ip_filters=["203.0.113.10/32", "198.51.100.20/32"]</code></pre>
+  <p>Alternatively, keep sensitive or user-specific settings in <code>$HOME/.oci_starter_profile</code> as <code>TF_VAR_*</code> environment exports. Do not commit credentials, passwords, or private keys to source control.</p>
+
+  <h3>Review available commands</h3>
+  <pre><code>cd starter
+./starter.sh help</code></pre>
+  <p>This command only displays the generated command reference. It does not provision resources.</p>
+
+  <h3>Load the project environment</h3>
+  <p>Run <code>./starter.sh env</code> to open a Bash session configured for this OCI Starter project. It loads values in this order: deployment output in <code>target/tf_env.sh</code>, project values in <code>terraform.tfvars</code>, user overrides in <code>$HOME/.oci_starter_profile</code>, and optional group settings.</p>
+  <pre><code>./starter.sh env</code></pre>
+  <p>For an already deployed stack, the environment includes project and Terraform variables plus deployment details such as the compute connection settings and database connection information. For Kubernetes stacks, it also sets <code>KUBECONFIG</code>. Type <code>exit</code> to leave the shell. To load the same settings into your current Bash session, run:</p>
+  <pre><code>source ./starter.sh env</code></pre>
+  <p>The command checks required local tools and may query OCI to populate deployment details, but it does not create or change OCI resources.</p>
+
+  <h3>Worked example: Python, ReactJS, and Autonomous Database on public compute</h3>
+  <p>The generated public-compute sample contains a FastAPI REST service, a ReactJS frontend, and an Autonomous Database schema. The REST service exposes <code>/dept</code> for department data and <code>/info</code> for a stack description. The React frontend lives in <code>src/app/ui</code>; the SQL schema is in <code>src/app/db</code>.</p>
+
+  <aside class="warning"><strong>Cloud operation:</strong> <code>./starter.sh build</code> connects to OCI, applies Terraform, creates the stack’s configured resources, configures the database, and builds/deploys the backend and UI. Review the Terraform plan and cost implications first.</aside>
+  <pre><code>./starter.sh terraform plan
+./starter.sh build</code></pre>
+  <p>After deployment, OCI Starter displays the deployed application URL. For a public-compute deployment, it is typically <a href="http://compute-ip">http://compute-ip</a>. You can view the URL again at any time in <code>target/done.txt</code>.</p>
+
+  <h3>Inspect logs</h3>
+  <pre><code>cat target/build.log
+cat target/destroy.log</code></pre>
+  <p>OCI Starter retains timestamped logs under <code>target/logs/</code>. Use them first when a build or destroy operation does not complete as expected.</p>
+
+  <h2>4. Advanced and operational actions</h2>
+
+  <h3>Use a personal OCI Starter profile</h3>
+  <p><code>$HOME/.oci_starter_profile</code> is an optional, user-local shell file for settings you want to reuse across OCI Starter projects or keep outside the project directory. OCI Starter reads it after <code>terraform.tfvars</code>, so its <code>TF_VAR_*</code> exports take precedence over the same project values.</p>
+  <pre><code># $HOME/.oci_starter_profile
+export TF_VAR_compartment_ocid="ocid1.compartment..."
+export TF_VAR_region="eu-frankfurt-1"
+export TF_VAR_public_ip_filters='["203.0.113.42/32"]'</code></pre>
+  <p>Add every trusted CIDR to the same JSON list in the profile.</p>
+  <p>This is useful for personal defaults such as a compartment, region, or the public IP range from which you normally build and access stacks. Project-specific values can remain in <code>terraform.tfvars</code>.</p>
+  <aside class="warning"><strong>Protect this file:</strong> It can contain sensitive settings. Keep it in your home directory, restrict its file permissions, and never commit it to source control. Do not add private keys, passwords, or values that you would not want exposed in a terminal log.</aside>
+  <p>To confirm the effective configuration for a project, open the OCI Starter environment:</p>
+  <pre><code>./starter.sh env</code></pre>
+  <p>OCI Starter loads values in this order: deployment output in <code>target/tf_env.sh</code>, <code>terraform.tfvars</code>, then <code>$HOME/.oci_starter_profile</code>. The later profile values override earlier values with the same <code>TF_VAR_*</code> name.</p>
+
+  <h3>Redeploy application changes</h3>
+  <p>After changing files under <code>src/app/</code>, including the FastAPI backend or ReactJS frontend, redeploy the application portion:</p>
+  <aside class="warning"><strong>Cloud operation:</strong> This command connects to OCI and updates the deployed application. It does not perform the full Terraform and database build.</aside>
+  <pre><code>./starter.sh build app</code></pre>
+
+  <h3>Preview infrastructure changes</h3>
+  <p>Use a Terraform plan before changing infrastructure configuration or Terraform files:</p>
+  <pre><code>./starter.sh terraform plan</code></pre>
+  <p>A plan reads the current OCI state and uses your configured OCI credentials, but does not apply the proposed changes.</p>
+
+  <h3>Connect to deployed resources</h3>
+  <p>For a compute deployment, open an SSH session after the stack has been built:</p>
+  <pre><code>./starter.sh ssh compute</code></pre>
+  <p>Other generated targets can expose <code>ssh bastion</code> or <code>ssh db_node</code>. Use <code>./starter.sh help</code> to see what your stack supports.</p>
+
+  <h3>Manage a stale build lock</h3>
+  <p>If a previous build stopped unexpectedly and reports that another build is active, clear only the stale lock:</p>
+  <pre><code>./starter.sh unlock</code></pre>
+
+  <h3>Start and stop supported resources</h3>
+  <aside class="warning"><strong>Cloud operation:</strong> These commands use the OCI CLI to start or stop supported resources recorded in the Terraform state.</aside>
+  <pre><code>./starter.sh start
+./starter.sh stop</code></pre>
+
+  <h3>Destroy the stack</h3>
+  <aside class="warning"><strong>Destructive cloud operation:</strong> <code>./starter.sh destroy</code> removes Terraform-managed OCI resources associated with this project and resource prefix. Review <code>terraform.tfvars</code>, the Terraform plan, and the generated logs before running it.</aside>
+  <pre><code>./starter.sh destroy</code></pre>
+
+  <h2>5. Customize safely</h2>
+  <ul>
+    <li>Change backend logic in <code>src/app/rest</code>.</li>
+    <li>Change the ReactJS application in <code>src/app/ui/src</code>.</li>
+    <li>Change database objects in <code>src/app/db</code>.</li>
+    <li>Review infrastructure changes in <code>src/terraform</code> with <code>./starter.sh terraform plan</code> before applying them.</li>
+    <li>Do not modify generated files in <code>bin/</code>; use application and documented configuration extension points instead.</li>
+  </ul>
+
+  <p>For a guided, deployment-specific walkthrough—including more architecture and customization options—continue with the <a href="https://livelabs.oracle.com/pls/apex/r/dbpm/livelabs/view-workshop?wid=3857">OCI Starter LiveLabs workshop</a>.</p>
+</body>
+</html>
