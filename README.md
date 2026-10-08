@@ -1,101 +1,157 @@
 # LiteLLM on OCI Hosted Applications
 
-This project deploys a [LiteLLM](https://docs.litellm.ai/) proxy and its web UI on Oracle Cloud Infrastructure (OCI). It gives clients one OpenAI-compatible API endpoint and provides a UI for managing LiteLLM models and keys. The application is packaged as a container and runs as an OCI Generative AI Hosted Application; there is no Compute VM, Kubernetes cluster, separate REST service, or application database source tree in this repository.
+Deploy the [LiteLLM](https://docs.litellm.ai/) proxy and admin UI on Oracle Cloud Infrastructure (OCI). Use the UI to configure models and API keys, then call those models through one OpenAI-compatible endpoint.
 
-The project was generated from OCI Starter. `starter.sh` wraps the Terraform, image build, registry push, and Hosted Deployment workflow.
+Developer and coding agent documentation is in [AGENTS.md](AGENTS.md).
 
 ## Architecture
 
 ```text
-Browser / OpenAI-compatible client
-              |
-              v
-Public OCI API Gateway  /<prefix>/*
-              |  forwards requests and maps Authorization to x-litellm-api-key
-              v
-OCI Generative AI Hosted Application (one replica)
-              |
-              +-- LiteLLM proxy + UI container (port 8080)
-              |      +-- OCI adapter for health probes, URL prefix, and headers
-              |      +-- LiteLLM model routing and key management
-              |
-              +-- OCI-managed PostgreSQL storage (DATABASE_URL)
-              +-- outbound access through the application subnet
+Browser / API client
+        |
+        v
+OCI API Gateway: https://<gateway-host>/<prefix>
+        |
+        v
+OCI Hosted Application: LiteLLM proxy + admin UI
+        |                          |
+        v                          v
+Managed PostgreSQL          Model providers
 ```
 
-Terraform in `src/terraform/` creates the VCN and subnets (unless existing network IDs are supplied), API Gateway, OCIR repositories, Hosted Application, PostgreSQL storage, IAM policy, and logging resources. The app subnet uses a private route through a NAT gateway. `public_ip_filters` controls permitted public CIDR ranges in the generated network rules. The Hosted Application itself is configured with a public endpoint and `NO_AUTH_CONFIG`; LiteLLM's master key is the application credential. Review the effective OCI network and access settings before exposing it.
+## 1. Prepare your build machine
 
-The container is built from a pinned LiteLLM image in `src/app/ui/Dockerfile`. `config.yaml` starts with an empty `model_list`, stores model settings in the database, and reads the master key from `LITELLM_MASTER_KEY`. `launch.py`, `oci_adapter.py`, and `oci-client.js` adapt LiteLLM to OCI's probes, gateway path, and authentication header. During a build, the scripts push a versioned image to OCIR and use the OCI CLI to create or update the Hosted Deployment. That deployment step is outside Terraform.
+You need:
 
-## Prerequisites
+- An OCI tenancy and compartment with permission to create networking, API Gateway, OCIR repositories, Generative AI Hosted Applications and storage, IAM policies, and logs.
+- Access to Hosted Applications in your selected OCI region.
+- Bash, Python 3, Terraform, OCI CLI, Docker, `jq`, `rsync`, and OpenSSL. Start Docker before building.
+- Configured OCI CLI credentials and an OCI auth token for pushing images to OCIR.
 
-- An OCI tenancy and compartment with permissions to create the resources above, plus access to OCI Generative AI Hosted Applications in the chosen region.
-- OCI CLI credentials configured locally (the Terraform OCI provider uses the `DEFAULT` profile unless `config_file_profile` is set).
-- Bash, Python 3, Terraform, OCI CLI, Docker, `jq`, `rsync`, and OpenSSL available on the build machine. Docker must be running.
-- A public IP CIDR range from which you will access the deployment.
+Run all commands below from this repository's root directory. OCI resources and model calls may incur charges.
 
-The OCI resources and Hosted Application may incur charges. Keep OCI credentials and LiteLLM keys out of source control.
+## 2. Configure OCI
 
-## Install and deploy
+Edit `terraform.tfvars` and replace the `__TO_FILL__` values:
 
-1. In `terraform.tfvars`, replace both `__TO_FILL__` values with your OCI compartment OCID and an allowed CIDR list. For example:
+```hcl
+prefix = "halitelm"
+compartment_ocid = "ocid1.compartment.oc1..."
+public_ip_filters = ["203.0.113.42/32"]
+```
 
-   ```hcl
-   prefix = "halitelm"
-   compartment_ocid = "ocid1.compartment.oc1..."
-   public_ip_filters = ["203.0.113.42/32"]
-   ```
+Use your own compartment OCID and actual public IP CIDR; the values above are examples. The CIDR list configures the generated network rules.
 
-   Use your **actual** public IP address; the example address is only a placeholder. Other OCI values can be supplied through `TF_VAR_*` exports in `$HOME/.oci_starter_profile`. That profile is loaded after `terraform.tfvars` and overrides matching values.
-
-2. From the repository root, review the plan and build:
-
-   ```bash
-   ./starter.sh help
-   ./starter.sh terraform plan
-   ./starter.sh build
-   ```
-
-   `build` applies Terraform, builds and pushes the LiteLLM image, configures the Hosted Application environment, and synchronizes the Hosted Deployment. It writes the public URL to `target/done.txt` and logs to `target/build.log` and `target/logs/`.
-
-3. Open the User Interface URL printed by the build. The API base URL is that same URL, typically `https://<gateway-host>/<prefix>`. Common routes are `/v1/models` and `/v1/chat/completions` under that base URL. Configure at least one model in LiteLLM before expecting model requests to work; `config.yaml` starts with no models.
-
-The build creates a master key in `target/litellm_master_key` if `LITELLM_MASTER_KEY` was not already set. Treat this file as a secret. Preserve the key across rebuilds and avoid printing it in shared logs or tickets. LiteLLM clients use the key as `Authorization: Bearer <key>`; the gateway maps that header to LiteLLM's configured `x-litellm-api-key` header.
-
-## Operate and update
-
-| Task | Command or file |
-| --- | --- |
-| Show available commands | `./starter.sh help` |
-| Open a shell with the project environment | `./starter.sh env` |
-| Preview infrastructure changes | `./starter.sh terraform plan` |
-| Rebuild and redeploy app changes | `./starter.sh build app` |
-| Rebuild infrastructure and app | `./starter.sh build` |
-| See deployment URLs | `cat target/done.txt` |
-| Read the latest build log | `cat target/build.log` |
-| Clear a stale build lock after a stopped build | `./starter.sh unlock` |
-
-Edit LiteLLM container behavior under `src/app/ui/`; edit OCI resources under `src/terraform/`. Run a Terraform plan before applying infrastructure changes. `bin/` contains the generated OCI Starter workflow. The generic help menu also lists Compute, bastion, database, and Kubernetes commands; those targets are not part of this Hosted Application stack.
-
-## Remove the deployment
-
-From the same checkout and Terraform state used for deployment, run:
+Additional OCI settings can be supplied in `$HOME/.oci_starter_profile`, for example:
 
 ```bash
-./starter.sh destroy
+export TF_VAR_region="eu-frankfurt-1"
 ```
 
-The command asks for confirmation and destroys Terraform-managed resources. On successful cleanup, OCI Starter renames `target/` to `target.<timestamp>/`; review the timestamped destroy log under its `logs/` directory and the OCI console afterward. In particular, verify that the Hosted Deployment created by the OCI CLI, OCIR images, and PostgreSQL storage have been removed; these may need separate cleanup if OCI does not remove them with their parent resources. Retain the archived Terraform state until cleanup is complete, since it identifies the managed resources.
+This profile is loaded after `terraform.tfvars` and overrides matching values. The PostgreSQL helper uses `config_file_profile` (default `DEFAULT`); other OCI Starter CLI commands use your CLI environment, so keep their credentials consistent. For broader setup instructions, see the [OCI Starter user guide](user_guide/index.html).
 
-## Project layout
+## 3. Install and deploy
 
-| Path | Purpose |
+Review the infrastructure plan, then build:
+
+```bash
+./starter.sh terraform plan
+./starter.sh build
+```
+
+The build provisions infrastructure and PostgreSQL, builds and pushes the LiteLLM container, and deploys it to the Hosted Application. Wait for the build to finish successfully before logging in.
+
+To watch progress from another terminal:
+
+```bash
+tail -f target/build.log
+```
+
+## 4. Find the LiteLLM link
+
+After a successful build, show the deployment links:
+
+```bash
+cat target/done.txt
+```
+
+The `User Interface` entry gives the public base URL, normally:
+
+```text
+https://<gateway-host>/<prefix>/
+```
+
+**For the LiteLLM admin UI, append `ui/` to that URL:**
+
+```text
+https://<gateway-host>/<prefix>/ui/
+```
+
+For example, with the default prefix, the admin UI is at `https://<gateway-host>/halitelm/ui/`. Use the gateway hostname printed for your own deployment.
+
+## 5. Find the password and log in
+
+The default login credentials are:
+
+| Field | Value |
 | --- | --- |
-| `starter.sh`, `bin/` | OCI Starter entry point and deployment scripts |
-| `terraform.tfvars` | Project-specific Terraform values |
-| `src/terraform/` | OCI infrastructure definitions |
-| `src/app/ui/` | LiteLLM image, configuration, and OCI adapter |
-| `target/` | Generated state, logs, deployment URLs, and local secrets (ignored by Git) |
-| `user_guide/` | General OCI Starter user guide |
+| Username | `admin` |
+| Password | The contents of `target/litellm_master_key` |
 
-For the broader OCI Starter workflow, see the local [user guide](user_guide/index.html).
+Display the password locally:
+
+```bash
+cat target/litellm_master_key
+```
+
+Copy the key into the password field on the LiteLLM login page. The page's `MASTER_KEY` refers to this project's `LITELLM_MASTER_KEY`. These are LiteLLM credentials, separate from your OCI console account. The default `admin` / master key login is described in the [LiteLLM quickstart](https://docs.litellm.ai/docs/proxy/docker_quick_start).
+
+The build uses an exported `LITELLM_MASTER_KEY` if supplied; otherwise it reuses the saved key or generates one on the first application build. Keep the saved key across rebuilds. It grants admin access: do not commit it or paste it into shared logs.
+
+If the file does not exist yet, check whether the build has reached the application build step and completed successfully.
+
+## 6. Add a model and use the API
+
+In the admin UI, open **Models + Endpoints**, add a model with its provider credentials, and test the connection. The initial deployment has no models configured. Create a virtual API key in the UI for your client.
+
+The API base URL is `https://<gateway-host>/<prefix>`; do not include `/ui`. For example, to list available models:
+
+```bash
+export LITELLM_BASE_URL="https://<gateway-host>/halitelm"
+read -r -s -p "LiteLLM API key: " LITELLM_API_KEY; echo
+curl "$LITELLM_BASE_URL/v1/models" \
+  -H "Authorization: Bearer $LITELLM_API_KEY"
+unset LITELLM_API_KEY
+```
+
+Chat requests go to `$LITELLM_BASE_URL/v1/chat/completions`. For an OpenAI-compatible SDK that expects the versioned base URL, use `https://<gateway-host>/<prefix>/v1`.
+
+## Update and troubleshoot
+
+| Task | Command or location |
+| --- | --- |
+| Rebuild and redeploy the application | `./starter.sh build app` |
+| Apply infrastructure changes and rebuild | `./starter.sh build` |
+| Preview infrastructure changes | `./starter.sh terraform plan` |
+| Find deployment links | `cat target/done.txt` |
+| Follow the build | `tail -f target/build.log` |
+| Find previous build logs | `target/logs/` |
+| Read application service logs | OCI Logging, in the project's log group |
+| Show available commands | `./starter.sh help` |
+| Remove a stale lock after the build has stopped | `./starter.sh unlock` |
+
+If login fails, check the `/ui/` URL and the saved key. If a model request fails, verify that the model is configured and that the client's API key has access to it. The generic OCI Starter help also lists commands for other deployment types; this project runs as a Hosted Application.
+
+## Delete the deployment
+
+1. Keep the original checkout and `target/` directory. Deletion needs both `target/terraform.tfstate` and `target/hosted_application_storage.ocid`.
+2. Run:
+
+   ```bash
+   ./starter.sh destroy
+   ```
+
+3. Answer `yes` to the confirmation. This removes the deployed infrastructure and deletes the PostgreSQL database and its data. PostgreSQL deletion runs through the OCI CLI provisioner.
+4. Check the destroy output and OCI console for remaining Hosted Deployments, registry images, or other project resources if cleanup reports errors.
+
+After successful cleanup, OCI Starter renames `target/` to `target.<timestamp>/`. Keep the archived state and logs until cleanup is verified. Do not remove the OCID file before deletion: the storage helper requires it and retains it when deletion fails.

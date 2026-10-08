@@ -51,6 +51,7 @@ process_terraform_tfvars() {
         else
             echo "# Generated from terraform.tfvars ($TF_VAR_prefix)" > $TARGET_DIR/tf_vars.sh
         fi
+        chmod +x $TARGET_DIR/tf_vars.sh
     fi
     # Read the file line by line, ignoring comments and empty lines
     while read -r line; do
@@ -82,7 +83,6 @@ process_terraform_tfvars() {
             fi
         fi
     done < "$PROJECT_DIR/terraform.tfvars"
-    chmod +x $TARGET_DIR/tf_vars.sh
     unset value
 }
 

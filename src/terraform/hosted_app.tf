@@ -1,18 +1,52 @@
 # Temporary solution to generate a issue with 403-NotAllowed, Hosted deployment is not supported 
 locals {
-    local_genai_region = var.region == "eu-amsterdam-1" ? "eu-frankfurt-1" : local.home_region
+  local_genai_region = var.region == "eu-amsterdam-1" ? "eu-frankfurt-1" : local.home_region
 }
 
 ###############################################################################
 # UI hosted application
 ###############################################################################
 
-resource "oci_generative_ai_hosted_application_storage" "litellm_postgres" {
-  compartment_id = local.lz_app_cmp_ocid
-  display_name   = "${var.prefix}-litellm-postgres"
-  storage_type   = "POSTGRESQL"
+resource "null_resource" "litellm_postgres" {
+  triggers = {
+    helper_path    = abspath("${local.project_dir}/bin/hosted_app_storage_cli.sh")
+    ocid_file      = abspath("${local.project_dir}/target/hosted_application_storage.ocid")
+    region         = var.region
+    profile        = var.config_file_profile
+    compartment_id = local.lz_app_cmp_ocid
+    display_name   = "${var.prefix}-litellm-postgres"
+    freeform_tags  = jsonencode(local.freeform_tags)
+  }
 
-  freeform_tags = local.freeform_tags
+  provisioner "local-exec" {
+    command = "bash \"$STORAGE_HELPER\" create"
+    environment = {
+      STORAGE_HELPER         = self.triggers.helper_path
+      STORAGE_OCID_FILE      = self.triggers.ocid_file
+      STORAGE_REGION         = self.triggers.region
+      STORAGE_PROFILE        = self.triggers.profile
+      STORAGE_COMPARTMENT_ID = self.triggers.compartment_id
+      STORAGE_DISPLAY_NAME   = self.triggers.display_name
+      STORAGE_FREEFORM_TAGS  = self.triggers.freeform_tags
+    }
+  }
+
+  provisioner "local-exec" {
+    when    = destroy
+    command = "bash \"$STORAGE_HELPER\" delete"
+    environment = {
+      STORAGE_HELPER    = self.triggers.helper_path
+      STORAGE_OCID_FILE = self.triggers.ocid_file
+      STORAGE_REGION    = self.triggers.region
+      STORAGE_PROFILE   = self.triggers.profile
+    }
+  }
+}
+
+# Retain this file alongside Terraform state: the destroy provisioner needs it.
+data "local_file" "litellm_postgres_ocid" {
+  filename   = null_resource.litellm_postgres.triggers.ocid_file
+  depends_on = [null_resource.litellm_postgres]
 }
 
 resource "oci_generative_ai_hosted_application" "starter_ui_hosted_application" {
@@ -42,7 +76,7 @@ resource "oci_generative_ai_hosted_application" "starter_ui_hosted_application" 
   }
 
   storage_configs {
-    storage_id               = oci_generative_ai_hosted_application_storage.litellm_postgres.id
+    storage_id               = trimspace(data.local_file.litellm_postgres_ocid.content)
     environment_variable_key = "DATABASE_URL"
   }
 
@@ -63,7 +97,7 @@ resource "oci_generative_ai_hosted_application" "starter_ui_hosted_application" 
 
 locals {
   hosted_application_base_url = "https://inference.generativeai.${var.region}.oci.oraclecloud.com/20251112/hostedApplications"
-  hosted_ui_invoke_url   = "${local.hosted_application_base_url}/${oci_generative_ai_hosted_application.starter_ui_hosted_application.id}/actions/invoke"
+  hosted_ui_invoke_url        = "${local.hosted_application_base_url}/${oci_generative_ai_hosted_application.starter_ui_hosted_application.id}/actions/invoke"
 }
 
 
