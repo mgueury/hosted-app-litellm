@@ -45,10 +45,10 @@ Use your own compartment OCID and actual public IP CIDR; the values above are ex
 Additional OCI settings can be supplied in `$HOME/.oci_starter_profile`, for example:
 
 ```bash
-export TF_VAR_region="eu-frankfurt-1"
+export TF_VAR_compartment_ocid="ocid1.compartment.oc1..."
 ```
 
-This profile is loaded after `terraform.tfvars` and overrides matching values. The PostgreSQL helper uses `config_file_profile` (default `DEFAULT`); other OCI Starter CLI commands use your CLI environment, so keep their credentials consistent. For broader setup instructions, see the [OCI Starter user guide](user_guide/index.html).
+This profile is loaded after `terraform.tfvars` and overrides matching values. For more info see the [OCI Starter user guide](user_guide/index.html).
 
 ## 3. Install and deploy
 
